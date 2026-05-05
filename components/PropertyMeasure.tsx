@@ -81,6 +81,13 @@ export default function PropertyMeasure({
     onChangeRef.current(polys);
   }, [polys]);
 
+  // serviceOptions can change (parent toggles services). Use a ref so the
+  // Leaflet draw callbacks (registered once on mount) always see the latest.
+  const serviceOptionsRef = useRef(serviceOptions);
+  useEffect(() => {
+    serviceOptionsRef.current = serviceOptions;
+  }, [serviceOptions]);
+
   // Lazy-load Leaflet on the client (it can't SSR).
   useEffect(() => {
     let cancelled = false;
@@ -160,15 +167,19 @@ export default function PropertyMeasure({
         layer._otrId = nextId++;
         drawnLayer.addLayer(layer);
         const sqft = polygonAreaSqft(layer);
-        setPolys((prev) => [
-          ...prev,
-          {
-            id: layer._otrId!,
-            label: defaultLabel(prev.length),
-            serviceSlug: "",
-            sqft,
-          },
-        ]);
+        const opts = serviceOptionsRef.current;
+        setPolys((prev) => {
+          const label = defaultLabel(prev.length);
+          return [
+            ...prev,
+            {
+              id: layer._otrId!,
+              label,
+              serviceSlug: defaultServiceSlugForLabel(label, opts),
+              sqft,
+            },
+          ];
+        });
       });
 
       map.on("draw:edited", (e: unknown) => {
@@ -254,7 +265,27 @@ export default function PropertyMeasure({
   }
 
   function updatePoly(id: number, patch: Partial<MeasuredPolygon>) {
-    setPolys((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+    setPolys((prev) =>
+      prev.map((p) => {
+        if (p.id !== id) return p;
+        const next = { ...p, ...patch };
+        // If the label changed and the customer hadn't deliberately changed
+        // the service, re-suggest the service from the new label.
+        if (
+          patch.label &&
+          patch.label !== p.label &&
+          (!p.serviceSlug ||
+            p.serviceSlug ===
+              defaultServiceSlugForLabel(p.label, serviceOptionsRef.current))
+        ) {
+          next.serviceSlug = defaultServiceSlugForLabel(
+            patch.label,
+            serviceOptionsRef.current,
+          );
+        }
+        return next;
+      }),
+    );
   }
 
   function deletePoly(id: number) {
@@ -376,6 +407,31 @@ function defaultLabel(idx: number): MeasureLabel {
     "Other",
   ];
   return order[idx] ?? "Other";
+}
+
+/**
+ * Map a polygon's human label to the most-likely service slug. If that service
+ * isn't in the available options (customer didn't pick it), fall back to the
+ * first available measurable service so sqft still rolls up somewhere instead
+ * of getting stuck in an unassigned polygon.
+ */
+function defaultServiceSlugForLabel(
+  label: string,
+  serviceOptions: { slug: string; name: string }[],
+): string {
+  const preferred: Record<string, string[]> = {
+    "House / Roof": ["gutter-cleaning", "pressure-washing"],
+    Driveway: ["pressure-washing"],
+    Sidewalk: ["pressure-washing"],
+    "Mulch bed": ["mulch-installation", "mulch-bed-edging"],
+    Lawn: ["leaf-removal"],
+    Other: [],
+  };
+  const candidates = preferred[label] ?? [];
+  for (const slug of candidates) {
+    if (serviceOptions.some((s) => s.slug === slug)) return slug;
+  }
+  return serviceOptions[0]?.slug ?? "";
 }
 
 /**
