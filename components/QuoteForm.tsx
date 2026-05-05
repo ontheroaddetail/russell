@@ -52,6 +52,9 @@ export default function QuoteForm() {
   const searchParams = useSearchParams();
   const [data, setData] = useState<QuoteRequest>(initial);
   const [polys, setPolys] = useState<MeasuredPolygon[]>([]);
+  // sqftBySlug is now editable state — bound to manual number inputs AND
+  // auto-populated when the customer draws polygons on the satellite map.
+  const [sqftBySlug, setSqftBySlug] = useState<Record<string, number>>({});
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string>("");
 
@@ -92,16 +95,34 @@ export default function QuoteForm() {
 
   const area = findServiceArea(data.area);
 
-  // Roll polygon-derived sqft per service into the request's sqftBySlug,
-  // and compute the live total estimate using priceForArea (area-adjusted).
-  const sqftBySlug = useMemo(() => {
-    const map: Record<string, number> = {};
+  // When polygons change, fold their per-service totals into sqftBySlug.
+  // Polygon drawing OVERWRITES the input for that service (last write wins).
+  useEffect(() => {
+    if (polys.length === 0) return;
+    const polyMap: Record<string, number> = {};
     for (const p of polys) {
       if (!p.serviceSlug || p.sqft <= 0) continue;
-      map[p.serviceSlug] = (map[p.serviceSlug] ?? 0) + p.sqft;
+      polyMap[p.serviceSlug] = (polyMap[p.serviceSlug] ?? 0) + p.sqft;
     }
-    return map;
+    if (Object.keys(polyMap).length === 0) return;
+    setSqftBySlug((prev) => {
+      const next = { ...prev };
+      for (const [k, v] of Object.entries(polyMap)) {
+        next[k] = Math.round(v);
+      }
+      return next;
+    });
   }, [polys]);
+
+  function setSqftFor(slug: string, raw: string) {
+    const n = raw === "" ? 0 : Math.max(0, Number(raw) || 0);
+    setSqftBySlug((prev) => {
+      const next = { ...prev };
+      if (n > 0) next[slug] = Math.round(n);
+      else delete next[slug];
+      return next;
+    });
+  }
 
   const estimate = useMemo(() => {
     let total = 0;
@@ -118,15 +139,9 @@ export default function QuoteForm() {
     return any ? total : null;
   }, [data.services, sqftBySlug, area]);
 
-  // Mirror sqft + estimate into the request payload.
+  // Mirror sqft + estimate into the request payload sent to /api/quote.
   useEffect(() => {
-    setData((d) => ({
-      ...d,
-      sqftBySlug: Object.fromEntries(
-        Object.entries(sqftBySlug).map(([k, v]) => [k, Math.round(v)]),
-      ),
-      customerEstimate: estimate,
-    }));
+    setData((d) => ({ ...d, sqftBySlug, customerEstimate: estimate }));
   }, [sqftBySlug, estimate]);
 
   const selectedServices = useMemo(
@@ -290,18 +305,78 @@ export default function QuoteForm() {
         </div>
       </Card>
 
-      {/* Step 3: satellite measurement */}
+      {/* Step 3: square footage — manual inputs + optional satellite drawing */}
       {measurableSelected.length > 0 && (
         <Card
-          title="Measure it from satellite"
-          subtitle="Type your address above, click 'Show my address', then trace polygons over what you want serviced. We compute square footage automatically."
+          title="Square footage"
+          subtitle="Type the rough square footage for each service, OR draw it on the satellite map below. Either way you'll get an instant estimate. Leave blank if you'd rather we measure on our end."
         >
-          <div className="rounded-xl border border-otr-blue/20 bg-otr-blue/5 p-4 text-sm text-otr-sky">
+          <div className="space-y-3">
+            {measurableSelected.map((s) => {
+              const sqft = sqftBySlug[s.slug];
+              const price = priceForArea(s, area);
+              const sub =
+                price.pricePerSqft && sqft && sqft > 0
+                  ? `~$${Math.max(
+                      sqft * price.pricePerSqft,
+                      price.minCharge ?? 0,
+                    ).toFixed(0)}`
+                  : `${price.startingAt}`;
+              return (
+                <div
+                  key={s.slug}
+                  className="flex flex-col gap-2 rounded-xl border border-white/5 bg-otr-slate/40 p-4 sm:flex-row sm:items-center sm:gap-4"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-otr-stone">
+                      {s.name}
+                    </div>
+                    <div className="text-xs text-otr-stone/55">
+                      {s.sqftHint}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      placeholder="sqft"
+                      value={sqft ?? ""}
+                      onChange={(e) => setSqftFor(s.slug, e.target.value)}
+                      className="w-28 rounded-lg border border-white/10 bg-otr-ink px-3 py-2 text-sm text-otr-stone placeholder:text-otr-stone/30 outline-none transition-all focus:border-otr-blue-bright focus:ring-2 focus:ring-otr-blue/30"
+                    />
+                    <span className="min-w-[60px] text-right text-xs font-semibold text-otr-sky">
+                      {sub}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {estimate !== null && (
+            <div className="mt-5 rounded-xl border border-otr-moss/30 bg-otr-moss/10 p-4">
+              <div className="text-[10px] uppercase tracking-wider text-otr-stone/50">
+                Live estimate
+              </div>
+              <div className="mt-1 font-display text-3xl font-semibold text-otr-stone">
+                ~${estimate.toFixed(0)}
+              </div>
+              <div className="mt-1 text-xs text-otr-stone/55">
+                Ballpark using the sqft you entered
+                {area ? ` in ${area.city}` : ""}. Final fixed quote comes back
+                within 24 hours.
+              </div>
+            </div>
+          )}
+
+          <div className="mt-6 rounded-xl border border-otr-blue/20 bg-otr-blue/5 p-4 text-sm text-otr-sky">
             <div className="flex items-start gap-2">
               <Ruler size={14} className="mt-0.5 shrink-0" />
               <div>
-                Don't want to draw? Skip this — we'll measure on our end in
-                Google Earth and email a fixed quote within 24 hours.
+                Not sure of the exact sqft? Trace it on the satellite map below
+                and we'll fill the numbers in for you. Or just skip it — we'll
+                measure on our end.
               </div>
             </div>
           </div>
@@ -317,56 +392,6 @@ export default function QuoteForm() {
               onPolygonsChange={setPolys}
             />
           </div>
-
-          {Object.keys(sqftBySlug).length > 0 && (
-            <div className="mt-5 space-y-2">
-              {measurableSelected.map((s) => {
-                const sqft = sqftBySlug[s.slug];
-                const price = priceForArea(s, area);
-                if (!sqft) return null;
-                const sub =
-                  price.pricePerSqft && sqft > 0
-                    ? `~$${Math.max(
-                        sqft * price.pricePerSqft,
-                        price.minCharge ?? 0,
-                      ).toFixed(0)}`
-                    : "";
-                return (
-                  <div
-                    key={s.slug}
-                    className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-otr-slate/40 p-3 text-sm"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-otr-stone">
-                        {s.name}
-                      </div>
-                      <div className="text-xs text-otr-stone/55">
-                        {Math.round(sqft).toLocaleString()} sqft measured
-                      </div>
-                    </div>
-                    <div className="text-sm font-semibold text-otr-sky">
-                      {sub}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {estimate !== null && (
-            <div className="mt-5 rounded-xl border border-otr-moss/30 bg-otr-moss/10 p-4">
-              <div className="text-[10px] uppercase tracking-wider text-otr-stone/50">
-                Live estimate
-              </div>
-              <div className="mt-1 font-display text-3xl font-semibold text-otr-stone">
-                ~${estimate.toFixed(0)}
-              </div>
-              <div className="mt-1 text-xs text-otr-stone/55">
-                Ballpark from your traced areas{area ? ` in ${area.city}` : ""}.
-                Final fixed quote comes back within 24 hours.
-              </div>
-            </div>
-          )}
         </Card>
       )}
 
