@@ -64,8 +64,16 @@ export default function PropertyMeasure({
   const [loading, setLoading] = useState(false);
   const [geoError, setGeoError] = useState<string>("");
   const [polys, setPolys] = useState<MeasuredPolygon[]>([]);
-  const polysRef = useRef(polys);
-  polysRef.current = polys;
+
+  // Bubble polys changes up to the parent AFTER commit (not during render).
+  // Using a ref so the parent's onPolygonsChange ref doesn't churn this effect.
+  const onChangeRef = useRef(onPolygonsChange);
+  useEffect(() => {
+    onChangeRef.current = onPolygonsChange;
+  }, [onPolygonsChange]);
+  useEffect(() => {
+    onChangeRef.current(polys);
+  }, [polys]);
 
   // Lazy-load Leaflet on the client (it can't SSR).
   useEffect(() => {
@@ -148,35 +156,32 @@ export default function PropertyMeasure({
         layer._otrId = nextId++;
         drawnLayer.addLayer(layer);
         const sqft = polygonAreaSqft(layer);
-        setPolys((prev) => {
-          const next = [
-            ...prev,
-            {
-              id: layer._otrId!,
-              label: defaultLabel(prev.length),
-              serviceSlug: "",
-              sqft,
-            },
-          ];
-          onPolygonsChange(next);
-          return next;
-        });
+        setPolys((prev) => [
+          ...prev,
+          {
+            id: layer._otrId!,
+            label: defaultLabel(prev.length),
+            serviceSlug: "",
+            sqft,
+          },
+        ]);
       });
 
       map.on("draw:edited", (e: unknown) => {
         const ev = e as { layers: import("leaflet").FeatureGroup };
+        const updates: Array<{ id: number; sqft: number }> = [];
         ev.layers.eachLayer((layer) => {
           const id = (layer as { _otrId?: number })._otrId;
           if (!id) return;
-          const sqft = polygonAreaSqft(layer);
-          setPolys((prev) => {
-            const next = prev.map((p) =>
-              p.id === id ? { ...p, sqft } : p,
-            );
-            onPolygonsChange(next);
-            return next;
-          });
+          updates.push({ id, sqft: polygonAreaSqft(layer) });
         });
+        if (updates.length === 0) return;
+        setPolys((prev) =>
+          prev.map((p) => {
+            const u = updates.find((x) => x.id === p.id);
+            return u ? { ...p, sqft: u.sqft } : p;
+          }),
+        );
       });
 
       map.on("draw:deleted", (e: unknown) => {
@@ -186,11 +191,7 @@ export default function PropertyMeasure({
           const id = (layer as { _otrId?: number })._otrId;
           if (id) removed.add(id);
         });
-        setPolys((prev) => {
-          const next = prev.filter((p) => !removed.has(p.id));
-          onPolygonsChange(next);
-          return next;
-        });
+        setPolys((prev) => prev.filter((p) => !removed.has(p.id)));
       });
 
       apiRef.current = { L, map, drawnLayer };
@@ -202,7 +203,10 @@ export default function PropertyMeasure({
       apiRef.current?.map.remove();
       apiRef.current = null;
     };
-  }, [onPolygonsChange]);
+    // onPolygonsChange is bubbled via the dedicated effect above; this init
+    // only needs to run once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function lookupAddress() {
     const full = [address, city].filter((s) => s.trim()).join(", ");
@@ -246,11 +250,7 @@ export default function PropertyMeasure({
   }
 
   function updatePoly(id: number, patch: Partial<MeasuredPolygon>) {
-    setPolys((prev) => {
-      const next = prev.map((p) => (p.id === id ? { ...p, ...patch } : p));
-      onPolygonsChange(next);
-      return next;
-    });
+    setPolys((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   }
 
   function deletePoly(id: number) {
@@ -262,11 +262,7 @@ export default function PropertyMeasure({
         }
       });
     }
-    setPolys((prev) => {
-      const next = prev.filter((p) => p.id !== id);
-      onPolygonsChange(next);
-      return next;
-    });
+    setPolys((prev) => prev.filter((p) => p.id !== id));
   }
 
   return (
