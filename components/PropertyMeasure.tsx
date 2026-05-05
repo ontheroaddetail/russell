@@ -1,5 +1,11 @@
 "use client";
 
+// Leaflet's CSS — Next.js processes these as static asset imports.
+// Keeping them at module level (not inside the dynamic `await import`)
+// avoids the TS "cannot find module" error during production builds.
+import "leaflet/dist/leaflet.css";
+import "leaflet-draw/dist/leaflet.draw.css";
+
 import { useEffect, useRef, useState } from "react";
 import { Loader2, MapPin, Pencil, Trash2 } from "lucide-react";
 
@@ -81,8 +87,6 @@ export default function PropertyMeasure({
     async function init() {
       const L = (await import("leaflet")).default ?? (await import("leaflet"));
       await import("leaflet-draw");
-      await import("leaflet/dist/leaflet.css");
-      await import("leaflet-draw/dist/leaflet.draw.css");
 
       if (cancelled || !containerRef.current) return;
 
