@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: `${SITE.name} — ${SITE.tagline}`,
     description:
-      "Trusted local crew. Multi-county service. Online booking that fully automates.",
+      "Trusted local crew based in Wadsworth, OH — On the Road across Akron, Cleveland, and beyond. Online booking that fully automates.",
     type: "website",
   },
 };

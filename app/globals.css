@@ -78,3 +78,36 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   filter: invert(0.85);
   cursor: pointer;
 }
+
+/* Galaxy: drifting shooting star */
+@keyframes shootingStar {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  35% {
+    opacity: 1;
+  }
+  60% {
+    transform: translate3d(-220px, 140px, 0);
+    opacity: 0;
+  }
+  100% {
+    transform: translate3d(-220px, 140px, 0);
+    opacity: 0;
+  }
+}
+.otr-shooting-star {
+  animation: shootingStar 9s ease-in infinite;
+  animation-delay: 3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .otr-shooting-star {
+    animation: none;
+    opacity: 0;
+  }
+}

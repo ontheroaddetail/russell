@@ -16,7 +16,9 @@ export default function Footer() {
               EXTERIOR CARE
             </div>
             <p className="mt-4 max-w-xs text-sm text-otr-stone/60">
-              Trusted local crew. Multi-county service. Booking that takes 60 seconds.
+              Trusted local crew based in Wadsworth, OH — On the Road across
+              Akron, Cleveland, and the towns in between. Booking that takes 60
+              seconds.
             </p>
           </div>
 

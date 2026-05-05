@@ -24,93 +24,63 @@ Open http://localhost:3000.
 
 ---
 
-## Google integration setup
+## Google integration setup (Apps Script — ~5 min)
 
-The booking form posts to `/api/book`, which writes a row to a Google Sheet and creates a Google Calendar event using a **service account** (no OAuth, no human login required at runtime).
+Bookings and quotes go through Google Apps Script web apps that you deploy from each spreadsheet. No service-account / OAuth / API-key setup required.
 
-Follow these steps once:
+The two sheets already live in your **OTR EXT** Drive folder:
 
-### 1. Create a Google Cloud project
+| Sheet | Drive ID |
+|---|---|
+| `OTR EXT Bookings` | `1MFIR5i2uqiFqKfRzCVCbY55witUzRuumdEVmFazFlKg` |
+| `OTR EXT Quotes` | `1pz1m0Qi15zBMC9DzPzySdEn_HFWynRrAXabEkVyQUMs` |
 
-1. Go to https://console.cloud.google.com/
-2. Click the project dropdown → **New Project**
-3. Name it something like `otr-bookings` and click **Create**
+Both have copies of the matching `.gs` script alongside them in the OTR EXT folder. You can also find the source under `apps-script/` in this repo.
 
-### 2. Enable the APIs
+### 1. Deploy the booking webhook
 
-1. In the project, open **APIs & Services → Library**
-2. Search for **Google Sheets API** → click **Enable**
-3. Search for **Google Calendar API** → click **Enable**
+1. Open **OTR EXT Bookings** → **Extensions → Apps Script**.
+2. Replace the default `Code.gs` with the contents of `apps-script/booking.gs`.
+3. (Optional) Edit `CALENDAR_ID` near the top — leave `'primary'` to use the main calendar of the account that owns the script (i.e. `onthewvroaddetail@gmail.com`).
+4. Click **Deploy → New deployment**.
+   - Type: **Web app**
+   - Description: `OTR EXT booking webhook`
+   - Execute as: **Me**
+   - Who has access: **Anyone**
+5. Click **Deploy** and authorize when prompted (you'll see a Google warning — review and continue).
+6. Copy the **Web app URL** it gives you (looks like `https://script.google.com/macros/s/AKfy.../exec`).
 
-### 3. Create a service account
+### 2. Deploy the quote webhook
 
-1. Go to **APIs & Services → Credentials**
-2. Click **Create Credentials → Service account**
-3. Give it a name (e.g. `otr-booking-writer`), click **Create and continue**
-4. Skip the "Grant access" step (Continue → Done)
-5. On the credentials page, click the new service account → **Keys** tab
-6. **Add Key → Create new key → JSON** → downloads a JSON file. Keep it safe.
+Same flow on **OTR EXT Quotes** → use `apps-script/quote.gs`. Copy that web app URL too.
 
-The JSON file contains:
-- `client_email` → use as `GOOGLE_SERVICE_ACCOUNT_EMAIL`
-- `private_key`  → use as `GOOGLE_PRIVATE_KEY` (keep the `\n` sequences as-is, wrap the whole value in double quotes)
+### 3. Set environment variables
 
-### 4. Create the booking Google Sheet
-
-1. Go to https://sheets.google.com → blank sheet → name it `OTR Bookings`
-2. In row 1, paste these column headers (one per cell, A → L):
-
-   | A | B | C | D | E | F | G | H | I | J | K | L |
-   |---|---|---|---|---|---|---|---|---|---|---|---|
-   | Timestamp | Name | Email | Phone | Services | Address | City | County | Date | Time Window | Notes | Contact Method |
-
-3. Click **Share** (top right). Paste the service account email (`...iam.gserviceaccount.com`). Set permission to **Editor**. Uncheck "Notify people". Share.
-4. Copy the sheet ID from the URL — it's the long string between `/d/` and `/edit`. That's your `GOOGLE_SHEET_ID`.
-
-### 5. Create / find the Google Calendar
-
-1. Go to https://calendar.google.com
-2. Left sidebar → **Other calendars** → **+** → **Create new calendar**
-3. Name it `OTR Bookings`, click **Create calendar**
-4. Once created, find it under **Settings and sharing** (hover the calendar name → ⋮ → Settings and sharing)
-5. Under **Share with specific people or groups**, click **Add people** → paste the service account email → permission **Make changes to events** → Send.
-6. Scroll down to **Integrate calendar**. Copy the **Calendar ID** (looks like `abc123...@group.calendar.google.com`). That's your `GOOGLE_CALENDAR_ID`.
-
-> If you'd rather use your personal/main Google Calendar, share *that* calendar with the service account using the same "Make changes to events" permission, and use its Calendar ID (your own email address for personal calendars).
-
-### 6. Set environment variables
-
-**Locally** — copy `.env.local.example` to `.env.local` and fill in:
+Locally, create `.env.local` next to `package.json` with:
 
 ```bash
-GOOGLE_SERVICE_ACCOUNT_EMAIL=otr-booking-writer@otr-bookings.iam.gserviceaccount.com
-GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMII...\n-----END PRIVATE KEY-----\n"
-GOOGLE_SHEET_ID=1abc...XYZ
-GOOGLE_CALENDAR_ID=abc...@group.calendar.google.com
+GOOGLE_BOOKING_WEBHOOK_URL=https://script.google.com/macros/s/AKfy.../exec
+GOOGLE_QUOTE_WEBHOOK_URL=https://script.google.com/macros/s/AKfy.../exec
 ```
 
-**Important:** keep the literal `\n` sequences inside the quoted private key string — `lib/google.ts` converts them back to newlines at runtime. Wrap the whole key in double quotes.
+On **Vercel**: Project → Settings → Environment Variables → add both, scoped to Production + Preview.
 
-**On Vercel** — Project → Settings → Environment Variables. Add all four. Tip: when pasting `GOOGLE_PRIVATE_KEY` into Vercel, paste the **multiline original** from the JSON file (not the `\n`-escaped version) — Vercel preserves newlines, and the same `replace(/\\n/g, "\n")` call is a safe no-op when there are no `\n` sequences.
-
-### 7. Test the integration
+### 4. Test the integration
 
 1. `npm run dev`
-2. Go to http://localhost:3000/booking
-3. Submit a test booking
-4. Confirm:
-   - A new row appears in the Google Sheet
-   - An event appears on the Google Calendar
-5. Server-side errors are logged to the Next.js console — check there if either side is missing.
+2. Visit each web app URL in a browser — you should see `{"ok":true,"hint":"..."}` confirming the deployment.
+3. http://localhost:3000/booking — pick an area and complete a test booking. A row should land in **OTR EXT Bookings** and an event on the calendar.
+4. http://localhost:3000/quote — submit a test quote. A row should land in **OTR EXT Quotes**.
+5. Server-side errors log to the Next.js console — check there if either side is missing.
 
 ---
 
 ## Customizing the site
 
 - **Phone, email, hours, social, business name** → `lib/site-config.ts`
-- **County list** (used in the footer, contact page, and booking form dropdown) → `COUNTIES` in `lib/site-config.ts`
+- **Service-area boxes** (Wadsworth / Akron / Cleveland — county, ZIP, blurb, towns covered) → `SERVICE_AREAS` in `lib/site-config.ts`
 - **Services** (name, description, icon, "starting at" price) → `lib/services.ts`
-- **About story copy** → `app/about/page.tsx` (search for `TODO`)
+- **About story copy** → `app/about/page.tsx`
 - **Hero copy** → `components/Hero.tsx`
 - **Logo** — currently a text wordmark in `components/Navbar.tsx` and `components/Footer.tsx`. Swap in an `<Image>` when you have one.
 - **Photo placeholders** — `app/about/page.tsx` has `[Crew photo placeholder]` divs you can replace with `<Image>` blocks.

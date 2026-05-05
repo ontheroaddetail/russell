@@ -15,7 +15,7 @@ export default function Hero() {
         <div className="max-w-3xl animate-fade-up">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium tracking-wider text-otr-sky backdrop-blur">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-otr-sky" />
-            ON THE ROAD · MULTI-COUNTY SERVICE
+            OTR — ON THE ROAD · WADSWORTH · AKRON · CLEVELAND
           </div>
 
           <h1 className="font-display text-5xl font-semibold leading-[1.05] text-otr-stone sm:text-6xl md:text-7xl">
@@ -27,9 +27,9 @@ export default function Hero() {
           </h1>
 
           <p className="mt-6 max-w-xl text-lg text-otr-stone/75">
-            Pressure washing, landscaping, gutters, and more — across the
-            region. {/* TODO: replace [counties] with real list */} Book
-            online in 60 seconds.
+            Pressure washing, landscaping, gutters, and more — based in
+            Wadsworth, on the road across Northeast Ohio. Book online in 60
+            seconds.
           </p>
 
           <div className="mt-10 flex flex-wrap items-center gap-4">

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { appendBookingRow, createCalendarEvent } from "@/lib/google";
+import { sendBooking } from "@/lib/google";
 import type { Booking, BookingResponse } from "@/lib/types";
 import { TIME_WINDOWS } from "@/lib/types";
 
@@ -12,7 +12,7 @@ function isBooking(b: unknown): b is Booking {
     Array.isArray(x.services) &&
     typeof x.address === "string" &&
     typeof x.city === "string" &&
-    typeof x.county === "string" &&
+    typeof x.area === "string" &&
     (x.propertyType === "residential" || x.propertyType === "commercial") &&
     typeof x.notes === "string" &&
     typeof x.date === "string" &&
@@ -55,8 +55,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const booking = body;
-  if (booking.services.length === 0) {
+  if (body.services.length === 0) {
     return NextResponse.json<BookingResponse>(
       {
         ok: false,
@@ -68,29 +67,15 @@ export async function POST(req: Request) {
     );
   }
 
-  // Run both in parallel — we want to record the booking even if one of them fails.
-  const [sheetResult, calendarResult] = await Promise.allSettled([
-    appendBookingRow(booking),
-    createCalendarEvent(booking),
-  ]);
-
-  const sheetWritten = sheetResult.status === "fulfilled";
-  const calendarCreated = calendarResult.status === "fulfilled";
-
-  if (!sheetWritten) {
-    console.error("[book] sheet append failed:", sheetResult.reason);
-  }
-  if (!calendarCreated) {
-    console.error("[book] calendar create failed:", calendarResult.reason);
-  }
-
-  // Succeed if at least one half worked. We'd rather keep the lead than reject the user.
-  if (!sheetWritten && !calendarCreated) {
+  try {
+    await sendBooking(body);
+  } catch (e) {
+    console.error("[book] webhook failed:", e);
     return NextResponse.json<BookingResponse>(
       {
         ok: false,
-        sheetWritten,
-        calendarCreated,
+        sheetWritten: false,
+        calendarCreated: false,
         message:
           "We couldn't save your booking right now. Please call us or try again in a moment.",
       },
@@ -98,9 +83,10 @@ export async function POST(req: Request) {
     );
   }
 
+  // The Apps Script handles both the sheet append and calendar event in one shot.
   return NextResponse.json<BookingResponse>({
     ok: true,
-    sheetWritten,
-    calendarCreated,
+    sheetWritten: true,
+    calendarCreated: true,
   });
 }

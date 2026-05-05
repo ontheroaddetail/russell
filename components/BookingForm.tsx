@@ -1,16 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
+  Calendar,
   Check,
   CheckCircle2,
   AlertCircle,
+  Clock,
   Loader2,
+  MapPin,
 } from "lucide-react";
-import { SERVICES } from "@/lib/services";
-import { COUNTIES } from "@/lib/site-config";
+import { SERVICES, priceForArea } from "@/lib/services";
+import { SERVICE_AREAS, findServiceArea } from "@/lib/site-config";
 import type {
   Booking,
   BookingResponse,
@@ -22,7 +26,7 @@ import { TIME_WINDOWS } from "@/lib/types";
 
 type Status = "idle" | "submitting" | "success" | "error";
 
-const STEPS = ["Services", "Property", "Date & Time", "Contact"] as const;
+const STEPS = ["Area", "Services", "Property", "Date & Time", "Contact"] as const;
 
 function tomorrowISO(): string {
   const d = new Date();
@@ -34,7 +38,7 @@ const initialBooking: Booking = {
   services: [],
   address: "",
   city: "",
-  county: "",
+  area: "",
   propertyType: "residential",
   notes: "",
   date: "",
@@ -46,6 +50,7 @@ const initialBooking: Booking = {
 };
 
 export default function BookingForm() {
+  const searchParams = useSearchParams();
   const [step, setStep] = useState(0);
   const [booking, setBooking] = useState<Booking>(initialBooking);
   const [status, setStatus] = useState<Status>("idle");
@@ -53,9 +58,33 @@ export default function BookingForm() {
   const [touched, setTouched] = useState(false);
 
   const minDate = useMemo(tomorrowISO, []);
+  const area = findServiceArea(booking.area);
+
+  // Prefill area from ?area=… on the city CTA buttons. Auto-advance past step 0.
+  useEffect(() => {
+    const areaParam = searchParams.get("area");
+    if (!areaParam) return;
+    const match = SERVICE_AREAS.find((a) => a.slug === areaParam);
+    if (!match) return;
+    setBooking((b) => ({
+      ...b,
+      area: match.slug,
+      city: b.city || match.city,
+    }));
+    setStep((s) => (s === 0 ? 1 : s));
+  }, [searchParams]);
 
   function update<K extends keyof Booking>(key: K, value: Booking[K]) {
     setBooking((b) => ({ ...b, [key]: value }));
+  }
+
+  function pickArea(slug: string) {
+    const match = findServiceArea(slug);
+    setBooking((b) => ({
+      ...b,
+      area: slug,
+      city: b.city || match?.city || "",
+    }));
   }
 
   function toggleService(name: string) {
@@ -69,18 +98,21 @@ export default function BookingForm() {
 
   function validateStep(): string | null {
     if (step === 0) {
-      if (booking.services.length === 0) return "Pick at least one service.";
+      if (!booking.area) return "Pick a service area to start.";
     }
     if (step === 1) {
-      if (!booking.address.trim()) return "Address is required.";
-      if (!booking.city.trim()) return "City is required.";
-      if (!booking.county) return "Pick the county.";
+      if (booking.services.length === 0) return "Pick at least one service.";
     }
     if (step === 2) {
-      if (!booking.date) return "Pick a date.";
-      if (booking.date < minDate) return "Pick a date that's at least tomorrow.";
+      if (!booking.address.trim()) return "Address is required.";
+      if (!booking.city.trim()) return "City is required.";
     }
     if (step === 3) {
+      if (!booking.date) return "Pick a date.";
+      if (booking.date < minDate)
+        return "Pick a date that's at least tomorrow.";
+    }
+    if (step === 4) {
       if (!booking.name.trim()) return "Name is required.";
       if (!booking.phone.trim()) return "Phone is required.";
       if (!booking.email.trim() || !booking.email.includes("@"))
@@ -138,23 +170,25 @@ export default function BookingForm() {
   }
 
   return (
-    <div className="rounded-3xl border border-white/10 bg-otr-ink/80 p-6 shadow-2xl shadow-black/40 backdrop-blur md:p-10">
+    <div className="rounded-3xl border border-white/10 bg-otr-ink/80 p-5 shadow-2xl shadow-black/40 backdrop-blur sm:p-6 md:p-10">
       <ProgressBar step={step} />
 
       <div className="mt-8">
         {step === 0 && (
+          <AreaStep selectedSlug={booking.area} onPick={pickArea} />
+        )}
+        {step === 1 && (
           <ServicesStep
             selected={booking.services}
             onToggle={toggleService}
+            areaSlug={booking.area}
           />
         )}
-        {step === 1 && (
-          <PropertyStep booking={booking} update={update} />
-        )}
-        {step === 2 && (
+        {step === 2 && <PropertyStep booking={booking} update={update} />}
+        {step === 3 && (
           <DateTimeStep booking={booking} update={update} minDate={minDate} />
         )}
-        {step === 3 && <ContactStep booking={booking} update={update} />}
+        {step === 4 && <ContactStep booking={booking} update={update} />}
       </div>
 
       {touched && error && (
@@ -164,12 +198,12 @@ export default function BookingForm() {
         </div>
       )}
 
-      <div className="mt-8 flex items-center justify-between">
+      <div className="mt-8 flex items-center justify-between gap-3">
         <button
           type="button"
           onClick={back}
           disabled={step === 0 || status === "submitting"}
-          className="inline-flex items-center gap-2 rounded-full border border-white/10 px-5 py-2.5 text-sm font-semibold text-otr-stone/80 transition-all hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-30"
+          className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2.5 text-sm font-semibold text-otr-stone/80 transition-all hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-30 sm:px-5"
         >
           <ArrowLeft size={14} /> Back
         </button>
@@ -178,7 +212,7 @@ export default function BookingForm() {
           <button
             type="button"
             onClick={next}
-            className="group inline-flex items-center gap-2 rounded-full bg-otr-blue px-7 py-2.5 text-sm font-semibold text-otr-stone transition-all hover:bg-otr-blue-bright"
+            className="group inline-flex items-center gap-2 rounded-full bg-otr-blue px-6 py-2.5 text-sm font-semibold text-otr-stone transition-all hover:bg-otr-blue-bright sm:px-7"
           >
             Next
             <ArrowRight
@@ -191,7 +225,7 @@ export default function BookingForm() {
             type="button"
             onClick={submit}
             disabled={status === "submitting"}
-            className="inline-flex items-center gap-2 rounded-full bg-otr-blue px-7 py-2.5 text-sm font-semibold text-otr-stone transition-all hover:bg-otr-blue-bright disabled:opacity-60"
+            className="inline-flex items-center gap-2 rounded-full bg-otr-blue px-6 py-2.5 text-sm font-semibold text-otr-stone transition-all hover:bg-otr-blue-bright disabled:opacity-60 sm:px-7"
           >
             {status === "submitting" ? (
               <>
@@ -205,6 +239,22 @@ export default function BookingForm() {
           </button>
         )}
       </div>
+
+      {area && step > 0 && (
+        <div className="mt-5 rounded-xl border border-white/5 bg-otr-slate/40 p-3 text-xs text-otr-stone/65">
+          <span className="text-otr-stone/40">Booking in</span>{" "}
+          <span className="font-semibold text-otr-stone">
+            {area.city}, {area.state}
+          </span>
+          <button
+            type="button"
+            onClick={() => setStep(0)}
+            className="ml-2 text-otr-blue-bright hover:text-otr-sky"
+          >
+            Change
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -238,25 +288,126 @@ function ProgressBar({ step }: { step: number }) {
   );
 }
 
+function AreaStep({
+  selectedSlug,
+  onPick,
+}: {
+  selectedSlug: string;
+  onPick: (slug: string) => void;
+}) {
+  return (
+    <div>
+      <h3 className="font-display text-2xl font-semibold text-otr-stone">
+        Where's the property?
+      </h3>
+      <p className="mt-1 text-sm text-otr-stone/60">
+        Pick the closest of our three home cities. Pricing is tuned per area.
+      </p>
+
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
+        {SERVICE_AREAS.map((a) => {
+          const isSelected = selectedSlug === a.slug;
+          return (
+            <button
+              key={a.slug}
+              type="button"
+              onClick={() => onPick(a.slug)}
+              className={`group flex flex-col rounded-2xl border p-5 text-left transition-all ${
+                isSelected
+                  ? "border-otr-blue bg-otr-blue/15 shadow-lg shadow-otr-blue-deep/30"
+                  : "border-white/10 bg-otr-slate/40 hover:border-white/20 hover:bg-otr-slate"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className={`rounded-xl border p-2 ${
+                      isSelected
+                        ? "border-otr-blue/40 bg-otr-blue/20"
+                        : "border-white/10 bg-otr-ink"
+                    }`}
+                  >
+                    <MapPin size={16} className="text-otr-sky" />
+                  </div>
+                  <div>
+                    <div className="font-display text-lg font-semibold text-otr-stone">
+                      {a.city}, {a.state}
+                    </div>
+                    <div className="text-xs text-otr-stone/55">
+                      {a.county} · {a.zip}
+                    </div>
+                  </div>
+                </div>
+                {a.travelNote && (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wider text-otr-stone/65">
+                    <Clock size={10} /> {a.travelNote}
+                  </span>
+                )}
+              </div>
+
+              <p className="mt-3 text-xs leading-relaxed text-otr-stone/65">
+                {a.blurb}
+              </p>
+
+              <div className="mt-3 flex flex-wrap gap-1">
+                {a.covers.slice(0, 4).map((c) => (
+                  <span
+                    key={c}
+                    className="rounded-md border border-white/5 bg-otr-ink/70 px-1.5 py-0.5 text-[10px] text-otr-stone/70"
+                  >
+                    {c}
+                  </span>
+                ))}
+                {a.covers.length > 4 && (
+                  <span className="rounded-md px-1.5 py-0.5 text-[10px] text-otr-stone/45">
+                    +{a.covers.length - 4} more
+                  </span>
+                )}
+              </div>
+
+              {a.bookInAdvance && (
+                <div className="mt-3 inline-flex items-center gap-1 rounded-full border border-otr-blue/30 bg-otr-blue/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-otr-sky">
+                  Book in advance
+                </div>
+              )}
+
+              {a.priceMultiplier !== 1 && (
+                <div className="mt-3 text-[11px] font-medium text-otr-stone/55">
+                  Pricing: +{Math.round((a.priceMultiplier - 1) * 100)}% travel
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ServicesStep({
   selected,
   onToggle,
+  areaSlug,
 }: {
   selected: string[];
   onToggle: (name: string) => void;
+  areaSlug: string;
 }) {
+  const area = findServiceArea(areaSlug);
   return (
     <div>
       <h3 className="font-display text-2xl font-semibold text-otr-stone">
         What can we help with?
       </h3>
       <p className="mt-1 text-sm text-otr-stone/60">
-        Pick everything you'd like a quote on. You can adjust later.
+        Pricing shown is tuned for {area?.city ?? "your area"}. Pick everything
+        you'd like a quote on.
       </p>
       <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
         {SERVICES.map((s) => {
           const Icon = s.icon;
           const isSelected = selected.includes(s.name);
+          const price = priceForArea(s, area);
           return (
             <button
               key={s.slug}
@@ -269,20 +420,22 @@ function ServicesStep({
               }`}
             >
               <div
-                className={`rounded-lg p-2 transition-colors ${
+                className={`shrink-0 rounded-lg p-2 transition-colors ${
                   isSelected ? "bg-otr-blue/30" : "bg-otr-ink"
                 }`}
               >
                 <Icon size={18} className="text-otr-sky" />
               </div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-otr-stone">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold text-otr-stone">
                   {s.name}
                 </div>
-                <div className="text-xs text-otr-stone/55">{s.startingAt}</div>
+                <div className="truncate text-xs text-otr-stone/55">
+                  Starting at {price.startingAt}
+                </div>
               </div>
               <div
-                className={`flex h-5 w-5 items-center justify-center rounded-md border transition-all ${
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-all ${
                   isSelected
                     ? "border-otr-blue-bright bg-otr-blue-bright text-otr-black"
                     : "border-white/20"
@@ -311,7 +464,7 @@ function PropertyStep({
         Where are we headed?
       </h3>
       <p className="mt-1 text-sm text-otr-stone/60">
-        We service homes and commercial properties across the region.
+        We service homes and commercial properties across Northeast Ohio.
       </p>
 
       <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -323,26 +476,13 @@ function PropertyStep({
             className={inputCls}
           />
         </Field>
-        <Field label="City">
+        <Field label="City" className="md:col-span-2">
           <input
             value={booking.city}
             onChange={(e) => update("city", e.target.value)}
+            placeholder="Wadsworth"
             className={inputCls}
           />
-        </Field>
-        <Field label="County">
-          <select
-            value={booking.county}
-            onChange={(e) => update("county", e.target.value)}
-            className={inputCls}
-          >
-            <option value="">Select county…</option>
-            {COUNTIES.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
         </Field>
 
         <Field label="Property type" className="md:col-span-2">
@@ -391,6 +531,23 @@ function DateTimeStep({
   update: <K extends keyof Booking>(key: K, value: Booking[K]) => void;
   minDate: string;
 }) {
+  const dateInputRef = useRef<HTMLInputElement>(null);
+
+  function openDatePicker() {
+    const el = dateInputRef.current;
+    if (!el) return;
+    if (typeof el.showPicker === "function") {
+      try {
+        el.showPicker();
+        return;
+      } catch {
+        // some browsers throw if not in a user gesture — fall through to focus
+      }
+    }
+    el.focus();
+    el.click();
+  }
+
   return (
     <div>
       <h3 className="font-display text-2xl font-semibold text-otr-stone">
@@ -401,14 +558,37 @@ function DateTimeStep({
       </p>
 
       <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Field label="Preferred date">
-          <input
-            type="date"
-            min={minDate}
-            value={booking.date}
-            onChange={(e) => update("date", e.target.value)}
-            className={inputCls}
-          />
+        <Field
+          label="Preferred date"
+          hint="Tap the field to open the calendar picker."
+        >
+          <button
+            type="button"
+            onClick={openDatePicker}
+            className={`group relative flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-otr-slate/40 px-4 py-3 text-left text-sm transition-all hover:border-white/20 hover:bg-otr-slate focus-within:border-otr-blue-bright focus-within:bg-otr-slate focus-within:ring-2 focus-within:ring-otr-blue/30`}
+          >
+            <span
+              className={
+                booking.date ? "text-otr-stone" : "text-otr-stone/40"
+              }
+            >
+              {booking.date || "Pick a date…"}
+            </span>
+            <Calendar
+              size={16}
+              className="shrink-0 text-otr-sky"
+              aria-hidden="true"
+            />
+            <input
+              ref={dateInputRef}
+              type="date"
+              min={minDate}
+              value={booking.date}
+              onChange={(e) => update("date", e.target.value)}
+              className="absolute inset-0 cursor-pointer opacity-0"
+              aria-label="Preferred date"
+            />
+          </button>
         </Field>
         <Field label="Time window">
           <select
@@ -479,7 +659,7 @@ function ContactStep({
                 key={m}
                 type="button"
                 onClick={() => update("contactMethod", m)}
-                className={`flex-1 rounded-xl border px-4 py-3 text-sm font-semibold capitalize transition-all ${
+                className={`flex-1 rounded-xl border px-3 py-3 text-sm font-semibold capitalize transition-all sm:px-4 ${
                   booking.contactMethod === m
                     ? "border-otr-blue bg-otr-blue/15 text-otr-stone"
                     : "border-white/10 bg-otr-slate/40 text-otr-stone/70 hover:bg-otr-slate"
@@ -497,7 +677,7 @@ function ContactStep({
 
 function SuccessPanel({ booking }: { booking: Booking }) {
   return (
-    <div className="rounded-3xl border border-otr-moss/30 bg-gradient-to-b from-otr-ink to-otr-slate/40 p-10 text-center shadow-2xl shadow-black/40">
+    <div className="rounded-3xl border border-otr-moss/30 bg-gradient-to-b from-otr-ink to-otr-slate/40 p-6 text-center shadow-2xl shadow-black/40 sm:p-10">
       <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-otr-moss/15 text-otr-moss">
         <CheckCircle2 size={32} />
       </div>
@@ -513,11 +693,11 @@ function SuccessPanel({ booking }: { booking: Booking }) {
         <div className="mb-1 text-[10px] uppercase tracking-wider text-otr-stone/40">
           Summary
         </div>
-        <div>
+        <div className="break-words">
           <span className="text-otr-stone/40">Services:</span>{" "}
           {booking.services.join(", ")}
         </div>
-        <div>
+        <div className="break-words">
           <span className="text-otr-stone/40">Where:</span> {booking.address},{" "}
           {booking.city}
         </div>
@@ -542,7 +722,7 @@ function Field({
   className?: string;
 }) {
   return (
-    <label className={`block ${className}`}>
+    <label className={`block min-w-0 ${className}`}>
       <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-otr-stone/55">
         {label}
       </div>
@@ -553,4 +733,4 @@ function Field({
 }
 
 const inputCls =
-  "w-full rounded-xl border border-white/10 bg-otr-slate/40 px-4 py-3 text-sm text-otr-stone placeholder:text-otr-stone/30 outline-none transition-all focus:border-otr-blue-bright focus:bg-otr-slate focus:ring-2 focus:ring-otr-blue/30";
+  "block w-full min-w-0 rounded-xl border border-white/10 bg-otr-slate/40 px-4 py-3 text-base text-otr-stone placeholder:text-otr-stone/30 outline-none transition-all focus:border-otr-blue-bright focus:bg-otr-slate focus:ring-2 focus:ring-otr-blue/30 sm:text-sm";
