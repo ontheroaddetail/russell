@@ -1,6 +1,7 @@
 import type { Booking, QuoteRequest } from "./types";
 import { TIME_WINDOWS } from "./types";
 import { findServiceArea } from "./site-config";
+import { SERVICES, priceForArea } from "./services";
 
 function areaLabel(slug: string): string {
   if (!slug) return "";
@@ -73,11 +74,61 @@ export async function sendBooking(booking: Booking): Promise<void> {
   });
 }
 
+/**
+ * Server-side calculation: builds (a) a clean per-service sqft summary using
+ * service display names and (b) the total estimate. Always returns a price —
+ * if the customer didn't enter sqft for a service, we use that service's
+ * minCharge (or extract the number from `startingAt`) so the operator gets
+ * a meaningful baseline number to start from.
+ */
+function priceQuoteServerSide(quote: QuoteRequest): {
+  sqftSummary: string;
+  estimate: number;
+  breakdown: string;
+} {
+  const area = findServiceArea(quote.area);
+  const lines: string[] = [];
+  const breakdownLines: string[] = [];
+  let total = 0;
+
+  for (const svc of SERVICES) {
+    if (!quote.services.includes(svc.name)) continue;
+    const price = priceForArea(svc, area);
+    const sqft = quote.sqftBySlug?.[svc.slug] ?? 0;
+
+    if (price.pricePerSqft && sqft > 0) {
+      const raw = sqft * price.pricePerSqft;
+      const sub = Math.max(raw, price.minCharge ?? 0);
+      total += sub;
+      lines.push(`${svc.name}: ${sqft.toLocaleString()} sqft`);
+      breakdownLines.push(`${svc.name}: ${sqft.toLocaleString()} sqft → $${sub.toFixed(0)}`);
+    } else {
+      // No sqft provided — fall back to the service's min/starting charge.
+      const fallback = price.minCharge ?? extractDollarValue(price.startingAt) ?? 0;
+      total += fallback;
+      lines.push(`${svc.name}: (no sqft)`);
+      breakdownLines.push(`${svc.name}: starting at $${fallback}`);
+    }
+  }
+
+  return {
+    sqftSummary: lines.join("; "),
+    estimate: total,
+    breakdown: breakdownLines.join(" | "),
+  };
+}
+
+/** Pulls the first $NN(.NN) value out of a label like "$0.18 / sqft" or "$189". */
+function extractDollarValue(label: string): number | null {
+  const m = label.match(/\$([0-9]+(?:\.[0-9]+)?)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
 export async function sendQuote(quote: QuoteRequest): Promise<void> {
   const url = resolveQuoteUrl();
-  const sqftPairs = Object.entries(quote.sqftBySlug)
-    .filter(([, v]) => typeof v === "number" && v > 0)
-    .map(([slug, v]) => `${slug}: ${v}`);
+  const { sqftSummary, estimate, breakdown } = priceQuoteServerSide(quote);
 
   await postJson(url, {
     type: "quote",
@@ -89,10 +140,8 @@ export async function sendQuote(quote: QuoteRequest): Promise<void> {
     city: quote.city,
     serviceArea: areaLabel(quote.area),
     services: quote.services.join(", "),
-    sqftBySlug: sqftPairs.join("; "),
-    customerEstimate: quote.customerEstimate
-      ? `$${quote.customerEstimate.toFixed(2)}`
-      : "",
+    sqftBySlug: sqftSummary,
+    customerEstimate: estimate > 0 ? `$${estimate.toFixed(0)} (${breakdown})` : "",
     notes: quote.notes,
     status: "new",
   });
